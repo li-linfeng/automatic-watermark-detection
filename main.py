@@ -38,7 +38,9 @@ for i in range(3):
 Jt = J[:25]
 # now we have the values of alpha, Wm, J
 # Solve for all images
-Wk, Ik, W, alpha1 = solve_images(Jt, W_m, alpha, W)
+# Wk, Ik, W, alpha = solve_images(Jt, W_m, alpha, W, iters=2)
+# 使用 GPU 版本
+Wk, Ik, W, alpha = solve_images_gpu(Jt, W_m, alpha, W, iters=2)
 # W_m_threshold = (255*PlotImage(np.average(W_m, axis=2))).astype(np.uint8)
 # ret, thr = cv2.threshold(W_m_threshold, 127, 255, cv2.THRESH_BINARY)  
 

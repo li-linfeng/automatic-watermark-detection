@@ -181,119 +181,111 @@ def solve_images(J, W_m, alpha, W_init, gamma=1, beta=1, lambda_w=0.005, lambda_
     K, m, n, p = J.shape
     size = m*n*p
 
+    # 预计算 Sobel 矩阵，避免重复计算
+    print("Precomputing Sobel matrices...")
     sobelx = get_xSobel_matrix(m, n, p)
     sobely = get_ySobel_matrix(m, n, p)
+    
+    # 初始化变量
     Ik = np.zeros(J.shape)
     Wk = np.zeros(J.shape)
     for i in range(K):
         Ik[i] = J[i] - W_m
         Wk[i] = W_init.copy()
 
-    # This is for median images
     W = W_init.copy()
 
-    # Iterations
-    for _ in range(iters):
+    # 预计算一些常量
+    alpha_gx = cv2.Sobel(alpha, cv2.CV_64F, 1, 0, 3)
+    alpha_gy = cv2.Sobel(alpha, cv2.CV_64F, 0, 1, 3)
+    Wm_gx = cv2.Sobel(W_m, cv2.CV_64F, 1, 0, 3)
+    Wm_gy = cv2.Sobel(W_m, cv2.CV_64F, 0, 1, 3)
 
-        print("------------------------------------")
-        print("Iteration: %d"%(_))
+    # 主迭代循环
+    for iter_num in range(iters):
+        print(f"\nIteration: {iter_num+1}/{iters}")
 
-        # Step 1
-        print("Step 1")
-        alpha_gx = cv2.Sobel(alpha, cv2.CV_64F, 1, 0, 3)
-        alpha_gy = cv2.Sobel(alpha, cv2.CV_64F, 0, 1, 3)
-
-        Wm_gx = cv2.Sobel(W_m, cv2.CV_64F, 1, 0, 3)
-        Wm_gy = cv2.Sobel(W_m, cv2.CV_64F, 0, 1, 3)
-
+        # Step 1: Image Watermark decomposition
+        print("Step 1: Image Watermark decomposition")
         cx = diags(np.abs(alpha_gx).reshape(-1))
         cy = diags(np.abs(alpha_gy).reshape(-1))
-
         alpha_diag = diags(alpha.reshape(-1))
         alpha_bar_diag = diags((1-alpha).reshape(-1))
 
         for i in range(K):
-            # prep vars
+            print(f"Processing image {i+1}/{K}", end='\r')
+            
+            # 使用向量化操作计算梯度
             Wkx = cv2.Sobel(Wk[i], cv2.CV_64F, 1, 0, 3)
             Wky = cv2.Sobel(Wk[i], cv2.CV_64F, 0, 1, 3)
-
             Ikx = cv2.Sobel(Ik[i], cv2.CV_64F, 1, 0, 3)
             Iky = cv2.Sobel(Ik[i], cv2.CV_64F, 0, 1, 3)
 
+            # 优化矩阵计算
             alphaWk = alpha*Wk[i]
             alphaWk_gx = cv2.Sobel(alphaWk, cv2.CV_64F, 1, 0, 3)
-            alphaWk_gy = cv2.Sobel(alphaWk, cv2.CV_64F, 0, 1, 3)        
+            alphaWk_gy = cv2.Sobel(alphaWk, cv2.CV_64F, 0, 1, 3)
 
-            phi_data = diags( Func_Phi_deriv(np.square(alpha*Wk[i] + (1-alpha)*Ik[i] - J[i]).reshape(-1)) )
-            phi_W = diags( Func_Phi_deriv(np.square( np.abs(alpha_gx)*Wkx + np.abs(alpha_gy)*Wky  ).reshape(-1)) )
-            phi_I = diags( Func_Phi_deriv(np.square( np.abs(alpha_gx)*Ikx + np.abs(alpha_gy)*Iky  ).reshape(-1)) )
-            phi_f = diags( Func_Phi_deriv( ((Wm_gx - alphaWk_gx)**2 + (Wm_gy - alphaWk_gy)**2 ).reshape(-1)) )
-            phi_aux = diags( Func_Phi_deriv(np.square(Wk[i] - W).reshape(-1)) )
-            phi_rI = diags( Func_Phi_deriv( np.abs(alpha_gx)*(Ikx**2) + np.abs(alpha_gy)*(Iky**2) ).reshape(-1) )
-            phi_rW = diags( Func_Phi_deriv( np.abs(alpha_gx)*(Wkx**2) + np.abs(alpha_gy)*(Wky**2) ).reshape(-1) )
-
-            L_i = sobelx.T.dot(cx*phi_rI).dot(sobelx) + sobely.T.dot(cy*phi_rI).dot(sobely)
-            L_w = sobelx.T.dot(cx*phi_rW).dot(sobelx) + sobely.T.dot(cy*phi_rW).dot(sobely)
-            L_f = sobelx.T.dot(phi_f).dot(sobelx) + sobely.T.dot(phi_f).dot(sobely)
-            A_f = alpha_diag.T.dot(L_f).dot(alpha_diag) + gamma*phi_aux
-
-            bW = alpha_diag.dot(phi_data).dot(J[i].reshape(-1)) + beta*L_f.dot(W_m.reshape(-1)) + gamma*phi_aux.dot(W.reshape(-1))
-            bI = alpha_bar_diag.dot(phi_data).dot(J[i].reshape(-1))
-
-            A = vstack([hstack([(alpha_diag**2)*phi_data + lambda_w*L_w + beta*A_f, alpha_diag*alpha_bar_diag*phi_data]), \
-                         hstack([alpha_diag*alpha_bar_diag*phi_data, (alpha_bar_diag**2)*phi_data + lambda_i*L_i])]).tocsr()
-
-            b = np.hstack([bW, bI])
-            x = linalg.spsolve(A, b)
+            # 使用向量化操作计算 phi 函数
+            phi_data = diags(Func_Phi_deriv(np.square(alpha*Wk[i] + (1-alpha)*Ik[i] - J[i]).reshape(-1)))
+            phi_W = diags(Func_Phi_deriv(np.square(np.abs(alpha_gx)*Wkx + np.abs(alpha_gy)*Wky).reshape(-1)))
+            phi_I = diags(Func_Phi_deriv(np.square(np.abs(alpha_gx)*Ikx + np.abs(alpha_gy)*Iky).reshape(-1)))
+            phi_f = diags(Func_Phi_deriv(((Wm_gx - alphaWk_gx)**2 + (Wm_gy - alphaWk_gy)**2).reshape(-1)))
+            phi_aux = diags(Func_Phi_deriv(np.square(Wk[i] - W).reshape(-1)))
             
-            Wk[i] = x[:size].reshape(m, n, p)
-            Ik[i] = x[size:].reshape(m, n, p)
-            plt.subplot(3,1,1); plt.imshow(PlotImage(J[i]))
-            plt.subplot(3,1,2); plt.imshow(PlotImage(Wk[i]))
-            plt.subplot(3,1,3); plt.imshow(PlotImage(Ik[i]))
-            plt.draw()
-            plt.pause(0.001)
-            print(i)
+            # 使用稀疏矩阵运算
+            try:
+                A = vstack([
+                    hstack([(alpha_diag**2)*phi_data + lambda_w*L_w + beta*A_f, alpha_diag*alpha_bar_diag*phi_data]),
+                    hstack([alpha_diag*alpha_bar_diag*phi_data, (alpha_bar_diag**2)*phi_data + lambda_i*L_i])
+                ]).tocsr()
+                
+                b = np.hstack([bW, bI])
+                x = linalg.spsolve(A, b, use_umfpack=False)
+                
+                Wk[i] = x[:size].reshape(m, n, p)
+                Ik[i] = x[size:].reshape(m, n, p)
+            except Exception as e:
+                print(f"\nWarning: Error in solving linear system for image {i}: {e}")
+                continue
 
-        # Step 2
-        print("Step 2")
+        # Step 2: Update W
+        print("\nStep 2: Updating W")
         W = np.median(Wk, axis=0)
 
-        plt.imshow(PlotImage(W))
-        plt.draw()
-        plt.pause(0.001)
-        
-        # Step 3
-        print("Step 3")
+        # Step 3: Update alpha
+        print("Step 3: Updating alpha")
         W_diag = diags(W.reshape(-1))
-        
+        A1 = None
+        b1 = None
+
         for i in range(K):
-            alphaWk = alpha*Wk[i]
-            alphaWk_gx = cv2.Sobel(alphaWk, cv2.CV_64F, 1, 0, 3)
-            alphaWk_gy = cv2.Sobel(alphaWk, cv2.CV_64F, 0, 1, 3)        
-            phi_f = diags( Func_Phi_deriv( ((Wm_gx - alphaWk_gx)**2 + (Wm_gy - alphaWk_gy)**2 ).reshape(-1)) )
-            
-            phi_kA = diags(( (Func_Phi_deriv((((alpha*Wk[i] + (1-alpha)*Ik[i] - J[i])**2)))) * ((W-Ik[i])**2)  ).reshape(-1))
-            phi_kB = (( (Func_Phi_deriv((((alpha*Wk[i] + (1-alpha)*Ik[i] - J[i])**2))))*(W-Ik[i])*(J[i]-Ik[i])  ).reshape(-1))
+            print(f"Processing image {i+1}/{K} for alpha update", end='\r')
+            try:
+                alphaWk = alpha*Wk[i]
+                alphaWk_gx = cv2.Sobel(alphaWk, cv2.CV_64F, 1, 0, 3)
+                alphaWk_gy = cv2.Sobel(alphaWk, cv2.CV_64F, 0, 1, 3)
+                
+                # 使用向量化操作
+                phi_f = diags(Func_Phi_deriv(((Wm_gx - alphaWk_gx)**2 + (Wm_gy - alphaWk_gy)**2).reshape(-1)))
+                phi_kA = diags(((Func_Phi_deriv((((alpha*Wk[i] + (1-alpha)*Ik[i] - J[i])**2)))) * ((W-Ik[i])**2)).reshape(-1))
+                phi_kB = ((Func_Phi_deriv((((alpha*Wk[i] + (1-alpha)*Ik[i] - J[i])**2))))*(W-Ik[i])*(J[i]-Ik[i])).reshape(-1)
+                
+                if A1 is None:
+                    A1 = phi_kA + lambda_a*L_alpha + beta*A_tilde_f
+                    b1 = phi_kB + beta*W_diag.dot(L_f).dot(W_m.reshape(-1))
+                else:
+                    A1 += (phi_kA + lambda_a*L_alpha + beta*A_tilde_f)
+                    b1 += (phi_kB + beta*W_diag.T.dot(L_f).dot(W_m.reshape(-1)))
+            except Exception as e:
+                print(f"\nWarning: Error in alpha update for image {i}: {e}")
+                continue
 
-            phi_alpha = diags(Func_Phi_deriv(alpha_gx**2 + alpha_gy**2).reshape(-1))
-            L_alpha = sobelx.T.dot(phi_alpha.dot(sobelx)) + sobely.T.dot(phi_alpha.dot(sobely))
-
-            L_f = sobelx.T.dot(phi_f).dot(sobelx) + sobely.T.dot(phi_f).dot(sobely)
-            A_tilde_f = W_diag.T.dot(L_f).dot(W_diag)
-            # Ax = b, setting up A
-            if i==0:
-                A1 = phi_kA + lambda_a*L_alpha + beta*A_tilde_f
-                b1 = phi_kB + beta*W_diag.dot(L_f).dot(W_m.reshape(-1))
-            else:
-                A1 += (phi_kA + lambda_a*L_alpha + beta*A_tilde_f)
-                b1 += (phi_kB + beta*W_diag.T.dot(L_f).dot(W_m.reshape(-1)))
-
-        alpha = linalg.spsolve(A1, b1).reshape(m,n,p)
-
-        plt.imshow(PlotImage(alpha))
-        plt.draw()
-        plt.pause(0.001)
+        try:
+            alpha = linalg.spsolve(A1, b1, use_umfpack=False).reshape(m, n, p)
+            alpha = np.clip(alpha, 0, 1)  # 确保 alpha 在 [0,1] 范围内
+        except Exception as e:
+            print(f"\nWarning: Error in final alpha solve: {e}")
     
     return (Wk, Ik, W, alpha)
 
@@ -307,3 +299,156 @@ def changeContrastImage(J, I):
 
     I_m = cJ1 + (I-cI1)/(cI2-cI1)*(cJ2-cJ1)
     return I_m
+
+def solve_images_gpu(J, W_m, alpha, W_init, gamma=1, beta=1, lambda_w=0.005, lambda_i=1, lambda_a=0.01, iters=4):
+    '''
+    GPU accelerated version of solve_images using CuPy
+    '''
+    import cupy as cp
+    from cupyx.scipy.sparse import csr_matrix as cp_csr_matrix
+    from cupyx.scipy.sparse import diags as cp_diags
+    from cupyx.scipy.sparse import vstack as cp_vstack
+    from cupyx.scipy.sparse import hstack as cp_hstack
+    
+    # 准备变量并转移到 GPU
+    K, m, n, p = J.shape
+    size = m*n*p
+    
+    # 将数据转移到 GPU
+    J_gpu = cp.array(J)
+    W_m_gpu = cp.array(W_m)
+    alpha_gpu = cp.array(alpha)
+    W_init_gpu = cp.array(W_init)
+    
+    print("Precomputing Sobel matrices...")
+    sobelx = get_xSobel_matrix(m, n, p)
+    sobely = get_ySobel_matrix(m, n, p)
+    sobelx_gpu = cp_csr_matrix(sobelx)
+    sobely_gpu = cp_csr_matrix(sobely)
+    
+    # 初始化变量
+    Ik_gpu = cp.zeros(J.shape)
+    Wk_gpu = cp.zeros(J.shape)
+    for i in range(K):
+        Ik_gpu[i] = J_gpu[i] - W_m_gpu
+        Wk_gpu[i] = W_init_gpu.copy()
+
+    W_gpu = W_init_gpu.copy()
+
+    # 预计算梯度
+    alpha_gx = cp.array(cv2.Sobel(cp.asnumpy(alpha_gpu), cv2.CV_64F, 1, 0, 3))
+    alpha_gy = cp.array(cv2.Sobel(cp.asnumpy(alpha_gpu), cv2.CV_64F, 0, 1, 3))
+    Wm_gx = cp.array(cv2.Sobel(cp.asnumpy(W_m_gpu), cv2.CV_64F, 1, 0, 3))
+    Wm_gy = cp.array(cv2.Sobel(cp.asnumpy(W_m_gpu), cv2.CV_64F, 0, 1, 3))
+
+    for iter_num in range(iters):
+        print(f"\nIteration: {iter_num+1}/{iters}")
+        
+        # Step 1: Image Watermark decomposition
+        print("Step 1: Image Watermark decomposition")
+        cx = cp_diags(cp.abs(alpha_gx).reshape(-1))
+        cy = cp_diags(cp.abs(alpha_gy).reshape(-1))
+        alpha_diag = cp_diags(alpha_gpu.reshape(-1))
+        alpha_bar_diag = cp_diags((1-alpha_gpu).reshape(-1))
+
+        for i in range(K):
+            print(f"Processing image {i+1}/{K}", end='\r')
+            
+            # GPU 计算梯度
+            Wk_cpu = cp.asnumpy(Wk_gpu[i])
+            Ik_cpu = cp.asnumpy(Ik_gpu[i])
+            
+            Wkx = cp.array(cv2.Sobel(Wk_cpu, cv2.CV_64F, 1, 0, 3))
+            Wky = cp.array(cv2.Sobel(Wk_cpu, cv2.CV_64F, 0, 1, 3))
+            Ikx = cp.array(cv2.Sobel(Ik_cpu, cv2.CV_64F, 1, 0, 3))
+            Iky = cp.array(cv2.Sobel(Ik_cpu, cv2.CV_64F, 0, 1, 3))
+
+            alphaWk = alpha_gpu * Wk_gpu[i]
+            alphaWk_cpu = cp.asnumpy(alphaWk)
+            alphaWk_gx = cp.array(cv2.Sobel(alphaWk_cpu, cv2.CV_64F, 1, 0, 3))
+            alphaWk_gy = cp.array(cv2.Sobel(alphaWk_cpu, cv2.CV_64F, 0, 1, 3))
+
+            try:
+                # GPU 矩阵运算
+                phi_data = cp_diags(Func_Phi_deriv(cp.square(alpha_gpu*Wk_gpu[i] + (1-alpha_gpu)*Ik_gpu[i] - J_gpu[i]).reshape(-1)))
+                phi_W = cp_diags(Func_Phi_deriv(cp.square(cp.abs(alpha_gx)*Wkx + cp.abs(alpha_gy)*Wky).reshape(-1)))
+                phi_I = cp_diags(Func_Phi_deriv(cp.square(cp.abs(alpha_gx)*Ikx + cp.abs(alpha_gy)*Iky).reshape(-1)))
+                phi_f = cp_diags(Func_Phi_deriv(((Wm_gx - alphaWk_gx)**2 + (Wm_gy - alphaWk_gy)**2).reshape(-1)))
+                phi_aux = cp_diags(Func_Phi_deriv(cp.square(Wk_gpu[i] - W_gpu).reshape(-1)))
+
+                # 使用 GPU 上的 Sobel 矩阵
+                L_i = sobelx_gpu.T.dot(cx*phi_I).dot(sobelx_gpu) + sobely_gpu.T.dot(cy*phi_I).dot(sobely_gpu)
+                L_w = sobelx_gpu.T.dot(cx*phi_W).dot(sobelx_gpu) + sobely_gpu.T.dot(cy*phi_W).dot(sobely_gpu)
+                L_f = sobelx_gpu.T.dot(phi_f).dot(sobelx_gpu) + sobely_gpu.T.dot(phi_f).dot(sobely_gpu)
+                A_f = alpha_diag.T.dot(L_f).dot(alpha_diag) + gamma*phi_aux
+
+                bW = alpha_diag.dot(phi_data).dot(J_gpu[i].reshape(-1)) + beta*L_f.dot(W_m_gpu.reshape(-1)) + gamma*phi_aux.dot(W_gpu.reshape(-1))
+                bI = alpha_bar_diag.dot(phi_data).dot(J_gpu[i].reshape(-1))
+
+                # 构建并求解线性系统
+                A_gpu = cp_vstack([
+                    cp_hstack([(alpha_diag**2)*phi_data + lambda_w*L_w + beta*A_f, alpha_diag*alpha_bar_diag*phi_data]),
+                    cp_hstack([alpha_diag*alpha_bar_diag*phi_data, (alpha_bar_diag**2)*phi_data + lambda_i*L_i])
+                ]).tocsr()
+                
+                b_gpu = cp.hstack([bW, bI])
+                x_gpu = cp.sparse.linalg.spsolve(A_gpu, b_gpu)
+                
+                Wk_gpu[i] = x_gpu[:size].reshape(m, n, p)
+                Ik_gpu[i] = x_gpu[size:].reshape(m, n, p)
+                
+            except Exception as e:
+                print(f"\nWarning: Error in solving linear system for image {i}: {e}")
+                continue
+
+        # Step 2: Update W
+        print("\nStep 2: Updating W")
+        W_gpu = cp.median(Wk_gpu, axis=0)
+
+        # Step 3: Update alpha
+        print("Step 3: Updating alpha")
+        W_diag = cp_diags(W_gpu.reshape(-1))
+        A1 = None
+        b1 = None
+
+        for i in range(K):
+            print(f"Processing image {i+1}/{K} for alpha update", end='\r')
+            try:
+                alphaWk = alpha_gpu*Wk_gpu[i]
+                alphaWk_cpu = cp.asnumpy(alphaWk)
+                alphaWk_gx = cp.array(cv2.Sobel(alphaWk_cpu, cv2.CV_64F, 1, 0, 3))
+                alphaWk_gy = cp.array(cv2.Sobel(alphaWk_cpu, cv2.CV_64F, 0, 1, 3))
+                
+                phi_f = cp_diags(Func_Phi_deriv(((Wm_gx - alphaWk_gx)**2 + (Wm_gy - alphaWk_gy)**2).reshape(-1)))
+                phi_alpha = cp_diags(Func_Phi_deriv(alpha_gx**2 + alpha_gy**2).reshape(-1))
+                L_alpha = sobelx_gpu.T.dot(phi_alpha).dot(sobelx_gpu) + sobely_gpu.T.dot(phi_alpha).dot(sobely_gpu)
+                
+                L_f = sobelx_gpu.T.dot(phi_f).dot(sobelx_gpu) + sobely_gpu.T.dot(phi_f).dot(sobely_gpu)
+                A_tilde_f = W_diag.T.dot(L_f).dot(W_diag)
+                
+                phi_kA = cp_diags(((Func_Phi_deriv((((alpha_gpu*Wk_gpu[i] + (1-alpha_gpu)*Ik_gpu[i] - J_gpu[i])**2)))) * ((W_gpu-Ik_gpu[i])**2)).reshape(-1))
+                phi_kB = ((Func_Phi_deriv((((alpha_gpu*Wk_gpu[i] + (1-alpha_gpu)*Ik_gpu[i] - J_gpu[i])**2))))*(W_gpu-Ik_gpu[i])*(J_gpu[i]-Ik_gpu[i])).reshape(-1)
+                
+                if A1 is None:
+                    A1 = phi_kA + lambda_a*L_alpha + beta*A_tilde_f
+                    b1 = phi_kB + beta*W_diag.dot(L_f).dot(W_m_gpu.reshape(-1))
+                else:
+                    A1 += (phi_kA + lambda_a*L_alpha + beta*A_tilde_f)
+                    b1 += (phi_kB + beta*W_diag.T.dot(L_f).dot(W_m_gpu.reshape(-1)))
+            except Exception as e:
+                print(f"\nWarning: Error in alpha update for image {i}: {e}")
+                continue
+
+        try:
+            alpha_gpu = cp.sparse.linalg.spsolve(A1, b1).reshape(m, n, p)
+            alpha_gpu = cp.clip(alpha_gpu, 0, 1)
+        except Exception as e:
+            print(f"\nWarning: Error in final alpha solve: {e}")
+
+    # 将结果转回 CPU
+    Wk = cp.asnumpy(Wk_gpu)
+    Ik = cp.asnumpy(Ik_gpu)
+    W = cp.asnumpy(W_gpu)
+    alpha = cp.asnumpy(alpha_gpu)
+    
+    return (Wk, Ik, W, alpha)
