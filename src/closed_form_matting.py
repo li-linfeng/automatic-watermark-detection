@@ -44,17 +44,35 @@ def computeLaplacian(img, eps=10**(-7), win_rad=1):
 
 
 def closed_form_matte(img, scribbled_img, mylambda=100):
-    h, w,c  = img.shape
+    h, w, c = img.shape
     consts_map = (np.sum(abs(img - scribbled_img), axis=-1)>0.001).astype(np.float64)
-    #scribbled_img = rgb2gray(scribbled_img)
-
     consts_vals = scribbled_img[:,:,0]*consts_map
     D_s = consts_map.ravel()
     b_s = consts_vals.ravel()
-    # print("Computing Matting Laplacian")
+    
+    print("Computing Matting Laplacian")
     L = computeLaplacian(img)
+    print("Laplacian shape:", L.shape)
+    
     sD_s = scipy.sparse.diags(D_s)
-    # print("Solving for alpha")
-    x = scipy.sparse.linalg.spsolve(L + mylambda*sD_s, mylambda*b_s)
+    A = L + mylambda*sD_s
+    b = mylambda*b_s
+    
+    print("Starting iterative solver...")
+    try:
+        # 使用迭代求解器 bicgstab (双共轭梯度稳定法)
+        x, info = scipy.sparse.linalg.bicgstab(A, b, 
+                                              tol=1e-4,    # 容差
+                                              maxiter=1000) # 最大迭代次数
+        if info == 0:
+            print("Linear system solved successfully")
+        else:
+            print(f"Warning: Solver did not converge, info={info}")
+    except Exception as e:
+        print(f"Error solving linear system: {str(e)}")
+        raise
+        
+    print("Reshaping solution...")
     alpha = np.minimum(np.maximum(x.reshape(h, w), 0), 1)
+    print("Alpha computation completed")
     return alpha

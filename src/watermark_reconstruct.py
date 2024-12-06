@@ -111,6 +111,12 @@ def get_xSobel_matrix(m, n, p):
 
 # get estimated normalized alpha matte
 def estimate_normalized_alpha(J, W_m, num_images=30, threshold=170, invert=False, adaptive=False, adaptive_threshold=21, c2=10):
+    # 确保不超过实际图片数量
+    num_images = min(num_images, len(J))
+    
+    num, m, n, p = J.shape
+    alpha = np.zeros((num_images, m, n))
+    
     _Wm = (255*PlotImage(np.average(W_m, axis=2))).astype(np.uint8)
     if adaptive:
         thr = cv2.adaptiveThreshold(_Wm, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, adaptive_threshold, c2)
@@ -121,17 +127,15 @@ def estimate_normalized_alpha(J, W_m, num_images=30, threshold=170, invert=False
         thr = 255-thr
     thr = np.stack([thr, thr, thr], axis=2)
 
-    num, m, n, p = J.shape
-    alpha = np.zeros((num_images, m, n))
-    iterpatch = 900
-
     print("Estimating normalized alpha using %d images."%(num_images))
     # for all images, calculate alpha
     for idx in range(num_images):
+        print("Estimating normalized alpha idx:%d "%(idx))
         imgcopy = thr
         alph = closed_form_matte(J[idx], imgcopy)
         alpha[idx] = alph
 
+    # 计算所有图片的 alpha 的中值
     alpha = np.median(alpha, axis=0)
     return alpha
 

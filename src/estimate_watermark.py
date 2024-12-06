@@ -12,8 +12,8 @@ KERNEL_SIZE = 3
 
 def estimate_watermark(foldername):
 	"""
-	Given a folder, estimate the watermark (grad(W) = median(grad(J)))
-	Also, give the list of gradients, so that further processing can be done on it
+	给定一个文件夹，估计水印（grad(W) = median(grad(J)))
+	同时，提供梯度列表，以便进一步处理
 	"""
 	if not os.path.exists(foldername):
 		warnings.warn("Folder does not exist.", UserWarning)
@@ -124,14 +124,13 @@ def poisson_reconstruct(gradx, grady, kernel_size=KERNEL_SIZE, num_iters=100, h=
 
 
 def image_threshold(image, threshold=0.5):
-	'''
-	Threshold the image to make all its elements greater than threshold*MAX = 1
-	'''
-	m, M = np.min(image), np.max(image)
-	im = PlotImage(image)
-	im[im >= threshold] = 1
-	im[im < 1] = 0
-	return im
+    '''
+    Threshold the image to make all its elements greater than threshold*MAX = 1
+    '''
+    im = PlotImage(image)  # 将图像归一化到 [0, 1] 范围内
+    im[im >= threshold] = 1  # 将大于等于阈值的元素设置为1
+    im[im < 1] = 0  # 将小于阈值的元素设置为0
+    return im  # 返回处理后的图像
 
 
 def crop_watermark(gradx, grady, threshold=0.4, boundary_size=2):
@@ -141,8 +140,8 @@ def crop_watermark(gradx, grady, threshold=0.4, boundary_size=2):
 	@param: threshold - gives the threshold param
 	@param: boundary_size - boundary around cropped image
 	"""
-	W_mod = np.sqrt(np.square(gradx) + np.square(grady))
-	W_mod = PlotImage(W_mod)
+	W_mod = np.sqrt(np.square(gradx) + np.square(grady)) # 计算梯度幅值
+	W_mod = PlotImage(W_mod) #归一化处理
 	W_gray = image_threshold(np.average(W_mod, axis=2), threshold=threshold)
 	x, y = np.where(W_gray == 1)
 
